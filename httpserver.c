@@ -8,26 +8,30 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #define SIZE sizeof(struct sockaddr_in)
 #define BUFSIZE 1024
 
 int sockfd_connect;
 
+void closeproc(int sig);
+
 int main(void)
 {
 	int sockfd_listen;
-	int filefd;
+	int filefd, leng;
 	struct stat finfo;
-	char buf[BUFSIZE];
-	char fread[BUFSIZE] = {"NULL"};
+	char fread[BUFSIZE];
 	ssize_t nread;
-	char res_header[512] = {"NULL"}, req_header[512] = {"NULL"};
+	char res_header[512], req_header[512];
 	char *method, *path, *protocol;
-	char localpath[1000] = {"NULL"};
-	
+	char localpath[1000];
+	int pid;
+		
 	//ipv4, 5000번 포트, 사용가능 네트워크
 	struct sockaddr_in server;
+	struct sockaddr_in client;
 
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -53,50 +57,80 @@ int main(void)
 	printf("listening...\n");
 
 	while(1) {
+#if 0
 		if((sockfd_connect = accept(sockfd_listen, NULL, NULL)) == -1) {
 			printf("fail to call accept()\n");
 			continue;
 		}
-		printf("accepted\n--------------------------------------------------------\n");
-		recv(sockfd_connect, buf, BUFSIZE, 0);
-		printf("%s",buf);
+				
+		printf("\naccepted\n--------------------------------------------------------\n");
+		
+		memset(req_header, 0 , sizeof(req_header));
+		recv(sockfd_connect, req_header, BUFSIZE, 0);
+		printf("%s",req_header);
+		
 		method = strtok(buf," ");
 		path = strtok(NULL, " ");
 		protocol = strtok(strtok(NULL, " "), "\r\n");
+#else
+		leng = sizeof(client);
+		if((sockfd_connect = accept(sockfd_listen, (struct sockaddr *) &client, &leng)) == -1) {
+			printf("fail to call accept()\n");
+			continue;
+		}
+#endif			
+		printf("\naccepted\n--------------------------------------------------------\n");
+		pid = fork();
+
+
+		if(pid == 0) {
+			memset(req_header, 0x00, sizeof(req_header));
+			read(sockfd_connect,req_header,1024);
+			printf("%s", req_header);
+	
+			method = strtok(req_header," ");
+			path = strtok(NULL, " ");
+			protocol = strtok(strtok(NULL, " "), "\r\n");
+
 
 		
-		if(!strcmp("GET", method)) 
-		{
-			//fd = open("index.html", O_RDONLY);
-			if(!(strcmp("/",path)))
-				filefd = open("index.html", O_RDONLY);
-			else {
-				sprintf(localpath, ".%s", path);
-				printf("%s\n",localpath);
-				filefd = open(localpath, O_RDONLY);
-			}
-
-			
-			if(filefd == -1) {
-				sprintf(req_header,"HTTP/1.1 404 NotFound");
-				send(sockfd_connect, req_header, strlen(req_header) + 1, 0);
-			}
-			else
+			if(!strcmp("GET", method)) 
 			{
-				fstat(filefd, &finfo);
-				sprintf(res_header, "%s 200 OK\r\nContent-type: text/html\r\nContent-Length: %ld\r\n\r\n",protocol ,finfo.st_size);
-				send(sockfd_connect, res_header, strlen(res_header) + 1, 0);
-				while((nread = read(filefd, fread, BUFSIZE)) > 0) {
-					printf("%s", fread);
-					send(sockfd_connect, fread, BUFSIZE, 0);  //사진 보낼 때 문제 생김
+				//fd = open("index.html", O_RDONLY);
+				if(!(strcmp("/",path)))
+					filefd = open("index.html", O_RDONLY);
+				else {
+					sprintf(localpath, ".%s", path);
+					filefd = open(localpath, O_RDONLY);
 				}
-			}
+
+				memset(res_header, 0 ,sizeof(res_header));
+				if(filefd == -1) {
+					sprintf(req_header,"HTTP/1.1 404 NotFound");
+					send(sockfd_connect, res_header, strlen(res_header), 0);
+				}
+				else
+				{
+					fstat(filefd, &finfo);
+					sprintf(res_header, "%s 200 OK\r\nContent-type: text/html\r\nContent-Length: %ld\r\n\r\n",protocol ,finfo.st_size);
+					send(sockfd_connect, res_header, strlen(res_header), 0);	
+					while((nread = read(filefd, fread, BUFSIZE)) > 0) {
+						send(sockfd_connect, fread, BUFSIZE, 0);  
+					}	
+				}
 			
+			}
+			else if(!strcmp("POST", method))
+				printf("POST\n");
+			close(sockfd_connect);
+			
+			exit(1);	
 		}
-		else if(!strcmp("POST", method))
-			printf("POST\n");
-		//close(sockfd_connect);
+		else if(pid < 0) {
+			printf("fail to call fork()\n");
+			exit(1);
+		}
 	}
-	
 	return 0;
+	
 }
